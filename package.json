@@ -1,0 +1,15 @@
+{
+  "name": "ai-fudosan",
+  "version": "1.0.0",
+  "main": "index.js",
+  "type": "module",
+  "scripts": {
+    "start": "node index.js"
+  },
+  "dependencies": {
+    "@line/bot-sdk": "^7.5.2",
+    "express": "^4.19.2",
+    "openai": "^4.61.0",
+    "@supabase/supabase-js": "^2.44.2"
+  }
+}
