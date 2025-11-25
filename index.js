@@ -3,7 +3,7 @@ import * as line from "@line/bot-sdk";
 import OpenAI from "openai";
 import { createClient } from "@supabase/supabase-js";
 
-// ========= LINE / OPENAI Config =========
+/* ========= LINE / OPENAI / SUPABASE 設定 ========= */
 const config = {
   channelAccessToken: process.env.LINE_CHANNEL_ACCESS_TOKEN,
   channelSecret: process.env.LINE_CHANNEL_SECRET,
@@ -12,78 +12,88 @@ const lineClient = new line.Client(config);
 const app = express();
 const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 
-// ========= Supabase =========
 const supabase = createClient(
   process.env.SUPABASE_URL,
   process.env.SUPABASE_KEY
 );
 
-// ========= Health Check =========
+/* ========= Health check ========= */
 app.get("/", (_req, res) => res.send("AI-Kun Fudosan Running"));
 
-// ========= Webhook =========
+/* ========= Webhook ========= */
 app.post("/callback", line.middleware(config), async (req, res) => {
   const events = req.body.events ?? [];
   await Promise.all(events.map(handleEvent));
-  return res.status(200).end(); // LINE へ 200 OK を即返す(重要)
+  return res.status(200).end();
 });
 
-// ========= メッセージ処理 =========
+/* ========= イベント処理 ========= */
 async function handleEvent(event) {
   if (event.type !== "message" || event.message.type !== "text") return;
-  const userMessage = event.message.text;
   const userId = event.source.userId;
+  const userMessage = event.message.text;
 
   try {
-    const aiResponse = await runRealEstateAgentAI(userMessage);
-    await push(userId, aiResponse);
+    const reply = await runRealEstateAgentAI(userMessage);
+    await push(userId, reply);
 
-    // Supabase 保存（AI応答を保存して履歴活用）
+    // Supabase に保存
     await supabase.from("fudosan_logs").insert({
       user_id: userId,
       question: userMessage,
-      response: aiResponse,
+      response: reply
     });
-  } catch (err) {
-    console.error("Error:", err);
+
+  } catch (e) {
+    console.error("Error:", e);
     await push(userId, "エラーが発生しました。もう一度送ってみてください。");
   }
 }
 
-// ========= AI査定プロンプト =========
+/* ========= AIコアロジック（査定/質問切替） ========= */
 async function runRealEstateAgentAI(text) {
   const systemPrompt = `
 あなたは「AIくん - 不動産査定の専門家」です。
-ユーザーが住所・物件タイプ・間取り・築年数・広さなどを入力したら、売却価格の相場を推定します。
 
-回答は以下の形式で固定：
+ユーザーが入力した情報によって回答モードを切り替えなさい：
+
+【モードA：十分な情報がある場合】
+以下が揃っている場合 → 査定を実施してよい
+・エリア（住所・最寄り駅・市区町村など）
+・物件タイプ（マンション / 戸建て / 土地）
+・広さ（㎡/坪 or 間取り）
+・築年数 or 築浅/築古の表現
+
+出力形式（厳守）：
 ① 崩さない丁寧な一言コメント
 ② 推定査定額（価格幅で）
-③ 指標にしたポイント（3つ以内）
+③ 指標にしたポイント（最大3つ）
 ④ 追加で聞くべき質問があれば1つ
+
+
+【モードB：情報が不足している場合】
+査定せずに足りない情報を自然に質問
+・質問は最大2つ
+・営業色は出さない
+・「より正確な査定のために」という一言を添える
 `;
 
-  const response = await openai.chat.completions.create({
+  const completion = await openai.chat.completions.create({
     model: "gpt-4o-mini",
     messages: [
       { role: "system", content: systemPrompt },
-      { role: "user", content: text },
-    ],
+      { role: "user", content: text }
+    ]
   });
 
-  return response.choices[0].message.content;
+  return completion.choices[0].message.content;
 }
 
-// ========= LINE 返信 =========
+/* ========= LINE 返信ユーティリティ ========= */
 async function push(to, messages) {
-  return lineClient.pushMessage(to, [
-    {
-      type: "text",
-      text: messages,
-    },
-  ]);
+  return lineClient.pushMessage(to, [{ type: "text", text: messages }]);
 }
 
-// ========= 起動 =========
+/* ========= Render起動 ========= */
 const port = process.env.PORT || 10000;
-app.listen(port, () => console.log(`AI-kun running on ${port}`));
+app.listen(port, () => console.log(`AI-kun Fudosan running on ${port}`));
